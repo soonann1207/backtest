@@ -2,7 +2,7 @@ import pandas as pd
 from tqdm import tqdm
 
 import constants
-from entity import StockEntity
+from entity import StockEntity, Trade
 
 """
 class for Backtest Engine which takes in a trade order with the following details: 
@@ -22,8 +22,6 @@ trailing_stop = 0.02
 duration = Day/Good Till Cancelled (GTC)/ Pre Market/ Post Market
 """
 
-# TODO: add trigger: stop loss, take profit, trailing stop
-
 
 class BacktestEngine:
     def __init__(
@@ -41,6 +39,7 @@ class BacktestEngine:
         # self.slippage = slippage
         self.initial_capital = initial_capital
         self.current_capital = initial_capital
+        self.fees = 0.0
         self.order_records = pd.DataFrame(
             data=[],
             columns=[
@@ -106,7 +105,7 @@ class BacktestEngine:
         take_profit,
         trailing_stop,
         order_status,
-        comments="",
+        comments: str = "",
         # duration,
     ):
         new_trade_record = pd.DataFrame(
@@ -127,178 +126,30 @@ class BacktestEngine:
             },
             index=[0],
         )
-        self.order_records = pd.concat(
-            [self.order_records, new_trade_record], ignore_index=True
-        )
-
-    def execute_trade(
-        self,
-        ticker,
-        stock_entity,
-        date,
-        position_type,
-        quantity,
-        price,
-        stop_loss,
-        take_profit,
-        trailing_stop,
-        close_price,
-        high_price,
-        low_price,
-    ):
-        # Check type of trade
-        if position_type == constants.LONG_POSITION:
-            # Check if existing capital is enough to buy the stock with the given commission
-            if self.current_capital < (quantity * price) + self.commission * (
-                quantity * price
-            ):
-                print("Insufficient Capital")
-                # Update DataFrame with the trade details
-                self.update_order_records(
-                    date=date,
-                    stock=ticker,
-                    quantity=quantity,
-                    position_type=constants.LONG_POSITION,
-                    price=price,
-                    fees=self.commission * (quantity * price),
-                    # order_type="Market",
-                    order_status=constants.ORDER_STATUS_CANCELLED,
-                    stop_loss=stop_loss,
-                    take_profit=take_profit,
-                    trailing_stop=trailing_stop,
-                    comments="Insufficient Capital",
-                    # duration=duration,
-                )
-                return
-
-            # Check if the price is higher than low price
-            if price < low_price:
-                print("Bid price is lower than low price")
-                self.update_order_records(
-                    date=date,
-                    stock=ticker,
-                    quantity=quantity,
-                    position_type=constants.LONG_POSITION,
-                    price=price,
-                    fees=self.commission * (quantity * price),
-                    # order_type="Market",
-                    order_status=constants.ORDER_STATUS_CANCELLED,
-                    stop_loss=stop_loss,
-                    take_profit=take_profit,
-                    trailing_stop=trailing_stop,
-                    comments="Bid price is lower than low price",
-                    # duration=duration,
-                )
-                return
-
-            # Execute the trade
-            self.current_capital -= (quantity * price) + self.commission * (
-                quantity * price
-            )
-            self.update_order_records(
-                date=date,
-                stock=ticker,
-                quantity=quantity,
-                position_type=constants.LONG_POSITION,
-                price=price,
-                fees=self.commission * (quantity * price),
-                # order_type="Market",
-                order_status=constants.ORDER_STATUS_FILLED,
-                stop_loss=stop_loss,
-                take_profit=take_profit,
-                trailing_stop=trailing_stop,
-                # duration=duration,
+        if self.order_records.empty:
+            self.order_records = new_trade_record
+        else:
+            self.order_records = pd.concat(
+                [self.order_records, new_trade_record], ignore_index=True
             )
 
-            print("Trade Executed")
-            stock_entity.buy(
-                entry_date=date,
-                position_type=position_type,
-                price=price,
-                quantity=quantity,
-                stop_loss=stop_loss,
-                take_profit=take_profit,
-                trailing_stop=trailing_stop,
-                trade_status=constants.TRADE_STATUS_OPEN,
-            )
-            return
+    def calculate_fees(self, price, quantity):
+        return self.commission * price * quantity
 
-        elif position_type == constants.SHORT_POSITION:
-            # Check if existing capital is enough to sell the stock with the given commission
-            if self.current_capital < self.commission * (
-                quantity * price
-            ):  # TODO: check
-                print("Insufficient Capital")
-                self.update_order_records(
-                    date=date,
-                    stock=ticker,
-                    quantity=quantity,
-                    position_type=constants.SHORT_POSITION,
-                    price=price,
-                    fees=self.commission * (quantity * price),
-                    # order_type="Market",
-                    order_status=constants.ORDER_STATUS_CANCELLED,
-                    stop_loss=stop_loss,
-                    take_profit=take_profit,
-                    trailing_stop=trailing_stop,
-                    comments="Insufficient Capital",
-                    # duration=duration,
-                )
-                return
+    @staticmethod
+    def stop_loss_triggered(high_price, low_price, stop_loss, position_type):
+        if position_type == constants.LONG_POSITION and low_price <= stop_loss:
+            return True
+        elif position_type == constants.SHORT_POSITION and high_price >= stop_loss:
 
-            # Check if the price is lower than high price
-            if price > high_price:
-                print("Ask price is higher than high price")
-                self.update_order_records(
-                    date=date,
-                    stock=ticker,
-                    quantity=quantity,
-                    position_type=constants.SHORT_POSITION,
-                    price=price,
-                    fees=self.commission * (quantity * price),
-                    # order_type="Market",
-                    order_status=constants.ORDER_STATUS_CANCELLED,
-                    stop_loss=stop_loss,
-                    take_profit=take_profit,
-                    trailing_stop=trailing_stop,
-                    comments="Ask price is higher than high price",
-                    # duration=duration,
-                )
-                return
+            return True
 
-            # Execute the trade
-            self.current_capital += (quantity * price) - self.commission * (
-                quantity * price
-            )
-            self.update_order_records(
-                date=date,
-                stock=ticker,
-                quantity=quantity,
-                position_type=constants.SHORT_POSITION,
-                price=price,
-                fees=self.commission * (quantity * price),
-                # order_type="Market",
-                order_status=constants.ORDER_STATUS_FILLED,
-                stop_loss=stop_loss,
-                take_profit=take_profit,
-                trailing_stop=trailing_stop,
-                # duration=duration,
-            )
-            print("Trade Executed")
-            stock_entity.sell(
-                entry_date=date,
-                position_type=position_type,
-                price=price,
-                quantity=quantity,
-                stop_loss=stop_loss,
-                take_profit=take_profit,
-                trailing_stop=trailing_stop,
-                trade_status=constants.TRADE_STATUS_OPEN,
-            )
-
-            return
-
-        return
+    @staticmethod
+    def take_profit_triggered(high_price, low_price, take_profit, position_type):
+        if position_type == constants.LONG_POSITION and high_price >= take_profit:
+            return True
+        elif position_type == constants.SHORT_POSITION and low_price <= take_profit:
+            return True
 
     def backtest(self):
         """
@@ -321,37 +172,170 @@ class BacktestEngine:
 
         for price_index, row in tqdm(self.ohlvc.iterrows(), total=len(self.ohlvc)):
             for ticker, stock_entity in self.stocks.items():
-                stock_entity.stop_loss(row["Date"], row["High"], row["Low"])
-                stock_entity.take_profit(row["Date"], row["High"], row["Low"])
-                # check stop loss, take profit, trailing stop
-                # print(stockEntity.trades)
+                # Check if stop_loss is triggered
+                open_positions = stock_entity.get_open_position()
+                for index, position in open_positions.iterrows():
+                    if self.stop_loss_triggered(
+                        row["High"],
+                        row["Low"],
+                        position["stop_loss"],
+                        position["position_type"],
+                    ):
+                        if position["position_type"] == constants.LONG_POSITION:
+                            stock_entity.sell(
+                                Trade(
+                                    exit_date=row["Date"],
+                                    exit_action=constants.TRADE_ACTION_SELL,
+                                    exit_price=position["stop_loss"],
+                                    quantity=position["quantity"],
+                                    exit_fees=self.calculate_fees(
+                                        row["High"], position["quantity"]
+                                    ),
+                                    trigger=constants.TRADE_TRIGGER_STOP_LOSS,
+                                    trade_status=constants.TRADE_STATUS_CLOSED,
+                                ),
+                                open_position=index,
+                            )
+
+                        else:
+                            stock_entity.buy(
+                                Trade(
+                                    exit_date=row["Date"],
+                                    exit_action=constants.TRADE_ACTION_BUY,
+                                    exit_price=position["stop_loss"],
+                                    quantity=position["quantity"],
+                                    exit_fees=self.calculate_fees(
+                                        row["Low"], position["quantity"]
+                                    ),
+                                    trigger=constants.TRADE_TRIGGER_STOP_LOSS,
+                                    trade_status=constants.TRADE_STATUS_CLOSED,
+                                ),
+                                open_position=index,
+                            )
+
+                    if self.take_profit_triggered(
+                        row["High"],
+                        row["Low"],
+                        position["take_profit"],
+                        position["position_type"],
+                    ):
+                        if position["position_type"] == constants.LONG_POSITION:
+                            stock_entity.sell(
+                                Trade(
+                                    exit_date=row["Date"],
+                                    exit_action=constants.TRADE_ACTION_SELL,
+                                    exit_price=position["take_profit"],
+                                    quantity=position["quantity"],
+                                    exit_fees=self.calculate_fees(
+                                        row["High"], position["quantity"]
+                                    ),
+                                    trigger=constants.TRADE_TRIGGER_TAKE_PROFIT,
+                                    trade_status=constants.TRADE_STATUS_CLOSED,
+                                ),
+                                open_position=index,
+                            )
+                        else:
+                            stock_entity.buy(
+                                Trade(
+                                    exit_date=row["Date"],
+                                    exit_action=constants.TRADE_ACTION_BUY,
+                                    exit_price=position["take_profit"],
+                                    quantity=position["quantity"],
+                                    exit_fees=self.calculate_fees(
+                                        row["High"], position["quantity"]
+                                    ),
+                                    trigger=constants.TRADE_TRIGGER_TAKE_PROFIT,
+                                    trade_status=constants.TRADE_STATUS_CLOSED,
+                                ),
+                                open_position=index,
+                            )
+
+                # # TODO: implement for trailing stop
+
                 if row["Date"] in order_records_dict[ticker]:
                     trade_details = self.trade_orders.loc[
                         self.trade_orders["date"] == row["Date"]
                     ].squeeze()
-                    stock = trade_details["stock"]
                     date = trade_details["date"]
-                    position_type = trade_details["position_type"]
+                    stock = trade_details["stock"]
                     quantity = trade_details["quantity"]
+                    position_type = trade_details["position_type"]
                     price = trade_details["price"]
                     stop_loss = trade_details["stop_loss"]
                     take_profit = trade_details["take_profit"]
                     trailing_stop = trade_details["trailing_stop"]
-                    # duration = trade_details["duration"]
-                    # order_type = trade_details["order_type"]
-                    self.execute_trade(
-                        ticker=stock,
-                        stock_entity=stock_entity,
+                    order_status = ""
+                    comments = ""
+
+                    # Check if there is sufficient capital to execute the trade
+                    fees = self.calculate_fees(price, quantity)
+                    if self.current_capital < (quantity * price) + fees:
+                        order_status = constants.ORDER_STATUS_CANCELLED
+                        comments = "Insufficient Capital"
+
+                    else:
+                        if position_type == constants.LONG_POSITION:
+                            if price < row["Low"]:
+                                order_status = constants.ORDER_STATUS_CANCELLED
+                                comments = "Bid price is lower than low price"
+
+                            else:
+                                # Update capital, fees
+                                self.current_capital -= (quantity * price) + fees
+                                self.fees += fees
+                                order_status = constants.ORDER_STATUS_FILLED
+                                stock_entity.buy(
+                                    Trade(
+                                        entry_date=date,
+                                        position_type=position_type,
+                                        entry_action=constants.TRADE_ACTION_BUY,
+                                        entry_price=price,
+                                        quantity=quantity,
+                                        entry_fees=fees,
+                                        stop_loss=stop_loss,
+                                        take_profit=take_profit,
+                                        trailing_stop=trailing_stop,
+                                        trade_status=constants.TRADE_STATUS_OPEN,
+                                    )
+                                )
+                        elif position_type == constants.SHORT_POSITION:
+                            if price > row["High"]:
+                                order_status = constants.ORDER_STATUS_CANCELLED
+                                comments = "Ask price is higher than high price"
+
+                            else:
+                                # Update capital, fees
+                                self.current_capital -= fees
+                                self.fees += fees
+                                order_status = constants.ORDER_STATUS_FILLED
+                                stock_entity.sell(
+                                    Trade(
+                                        entry_date=date,
+                                        position_type=position_type,
+                                        entry_action=constants.TRADE_ACTION_SELL,
+                                        entry_price=price,
+                                        quantity=quantity,
+                                        entry_fees=fees,
+                                        stop_loss=stop_loss,
+                                        take_profit=take_profit,
+                                        trailing_stop=trailing_stop,
+                                        trade_status=constants.TRADE_STATUS_OPEN,
+                                    )
+                                )
+                    self.update_order_records(
                         date=date,
-                        position_type=position_type,
+                        stock=stock,
                         quantity=quantity,
+                        position_type=position_type,
                         price=price,
+                        fees=fees,
+                        # order_type=order_type,
                         stop_loss=stop_loss,
                         take_profit=take_profit,
                         trailing_stop=trailing_stop,
-                        close_price=self.ohlvc["Close"].loc[price_index],
-                        high_price=self.ohlvc["High"].loc[price_index],
-                        low_price=self.ohlvc["Low"].loc[price_index],
+                        order_status=order_status,
+                        comments=comments,
+                        # duration=duration,
                     )
 
                 stock_entity.update_historical_records(

@@ -21,3 +21,7 @@ TRADE_STATUS_CLOSED = "closed"
 TRADE_TRIGGER_STOP_LOSS = "stop_loss"
 TRADE_TRIGGER_TAKE_PROFIT = "take_profit"
 TRADE_TRIGGER_TRAILING_STOP = "trailing_stop"
+
+# Trade Actions
+TRADE_ACTION_BUY = "buy"
+TRADE_ACTION_SELL = "sell"

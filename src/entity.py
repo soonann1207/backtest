@@ -3,7 +3,7 @@ from typing import List
 
 import pandas as pd
 
-import constants
+from src import constants
 
 
 @dataclass
@@ -57,7 +57,8 @@ class StockEntity:
     HISTORICAL_RECORD_COLUMNS = [
         "date",
         "adjusted_close",
-        "quantity",
+        "long_position_quantity",
+        "short_position_quantity",
         "value",
     ]
 
@@ -74,12 +75,32 @@ class StockEntity:
         return pd.DataFrame(columns=columns)
 
     @staticmethod
-    def calculate_pnl(entry_quantity, entry_price, exit_quantity, exit_price):
+    def calculate_pnl(
+        entry_quantity,
+        entry_price,
+        exit_quantity,
+        exit_price,
+        entry_fees,
+        exit_fees,
+        position_type,
+    ):
         # TODO: check if pnl should include calculation for fees
-        return (exit_quantity * exit_price) - (entry_quantity * entry_price)
+        if position_type == constants.LONG_POSITION:
+            return (
+                (exit_quantity * exit_price)
+                - (entry_quantity * entry_price)
+                - entry_fees
+                - exit_fees
+            )
+        else:
+            return (
+                (entry_quantity * entry_price)
+                - (exit_quantity * exit_price)
+                - entry_fees
+                - exit_fees
+            )
 
     def buy(self, trade: Trade, open_position: int = None):
-
         if not isinstance(open_position, int):
             # No open position, add new row to add new trade
             if self.trades.empty:
@@ -146,17 +167,32 @@ class StockEntity:
             entry_price,
             exit_quantity,
             exit_price,
+            self.trades.at[index, "entry_fees"],
+            exit_fees,
+            self.trades.at[index, "position_type"],
         )
 
     def update_historical_records(self, date, adjusted_close):
-        # Calculate quantity, value
-        quantity = self.trades["quantity"].sum()
-        value = adjusted_close * quantity
+        open_trades = self.trades[
+            self.trades["trade_status"] == constants.TRADE_STATUS_OPEN
+        ]
+
+        long_qty = open_trades[open_trades["position_type"] == constants.LONG_POSITION][
+            "quantity"
+        ].sum()
+
+        short_qty = open_trades[
+            open_trades["position_type"] == constants.SHORT_POSITION
+        ]["quantity"].sum()
+
+        # TODO: check how to calculate value if there is both long and short positions
+        value = (adjusted_close * long_qty) - (adjusted_close * short_qty)
 
         new_record = {
             "date": date,
             "adjusted_close": adjusted_close,
-            "quantity": quantity,
+            "long_position_quantity": long_qty,
+            "short_position_quantity": short_qty,
             "value": value,
         }
 
@@ -168,12 +204,14 @@ class StockEntity:
             )
 
     def stats(self):
-        total_fees = self.trades["fees"].sum()
-        net_position = self.trades["quantity"].sum()
+        total_fees = self.trades["entry_fees"].sum() + self.trades["exit_fees"].sum()
+        net_position = self.trades[self.trades["trade_status"] == constants.TRADE_STATUS_OPEN]["quantity"].sum()
+        pnl = self.trades["pnl"].sum()
         return {
             "symbol": self.symbol,
             "total_fees": total_fees,
             "net_position": net_position,
+            "pnl": pnl,
         }
 
     def get_trades(self):
@@ -181,26 +219,6 @@ class StockEntity:
 
     def get_historical_records(self):
         return self.historical_records
-
-    def get_position(self):
-        # Return the current price, quantity, and the total value of the position
-        current_price = self.trades["price"].iloc[
-            -1
-        ]  # TODO: use latest adjusted close price
-        current_quantity = self.trades["quantity"].sum()
-        position_value = current_price * current_quantity
-        return {
-            "symbol": self.symbol,
-            "current_price": current_price,
-            "current_quantity": current_quantity,
-            "position_value": position_value,
-        }
-
-    def get_closed_position_by_date(self, date):
-        return self.trades[
-            (self.trades["trade_status"] == constants.TRADE_STATUS_CLOSED)
-            & (self.trades["exit_date"] == date)
-        ]
 
     def get_open_position(self):
         return self.trades[self.trades["trade_status"] == constants.TRADE_STATUS_OPEN]

@@ -1,8 +1,9 @@
 import pandas as pd
 from tqdm import tqdm
 
-import constants
-from entity import StockEntity, Trade
+from src import constants
+from src.entity import StockEntity, Trade
+from src.ibkr_fees import calculate_ibkr_fixed_cost
 
 """
 class for Backtest Engine which takes in a trade order with the following details: 
@@ -132,17 +133,18 @@ class BacktestEngine:
             self.order_records = pd.concat(
                 [self.order_records, new_trade_record], ignore_index=True
             )
-
-    def calculate_fees(self, price, quantity):
-        return self.commission * price * quantity
+    @staticmethod
+    def calculate_fees(price, quantity):
+        return calculate_ibkr_fixed_cost(qty=quantity, price_per_share=price)
 
     @staticmethod
     def stop_loss_triggered(high_price, low_price, stop_loss, position_type):
         if position_type == constants.LONG_POSITION and low_price <= stop_loss:
             return True
         elif position_type == constants.SHORT_POSITION and high_price >= stop_loss:
-
             return True
+        else:
+            return False
 
     @staticmethod
     def take_profit_triggered(high_price, low_price, take_profit, position_type):
@@ -150,6 +152,8 @@ class BacktestEngine:
             return True
         elif position_type == constants.SHORT_POSITION and low_price <= take_profit:
             return True
+        else:
+            return False
 
     def backtest(self):
         """
@@ -170,7 +174,7 @@ class BacktestEngine:
                 order_records_dict[row["stock"]] = []
             order_records_dict[row["stock"]].append(row["date"])
 
-        for price_index, row in tqdm(self.ohlvc.iterrows(), total=len(self.ohlvc)):
+        for _, row in tqdm(self.ohlvc.iterrows(), total=len(self.ohlvc)):
             for ticker, stock_entity in self.stocks.items():
                 # Check if stop_loss is triggered
                 open_positions = stock_entity.get_open_position()
@@ -181,6 +185,7 @@ class BacktestEngine:
                         position["stop_loss"],
                         position["position_type"],
                     ):
+                        fees = self.calculate_fees(row["High"], position["quantity"])
                         if position["position_type"] == constants.LONG_POSITION:
                             stock_entity.sell(
                                 Trade(
@@ -188,14 +193,18 @@ class BacktestEngine:
                                     exit_action=constants.TRADE_ACTION_SELL,
                                     exit_price=position["stop_loss"],
                                     quantity=position["quantity"],
-                                    exit_fees=self.calculate_fees(
-                                        row["High"], position["quantity"]
-                                    ),
+                                    exit_fees=fees,
                                     trigger=constants.TRADE_TRIGGER_STOP_LOSS,
                                     trade_status=constants.TRADE_STATUS_CLOSED,
                                 ),
                                 open_position=index,
                             )
+                            # Update capital and fees
+                            self.current_capital += (
+                                position["stop_loss"] * position["quantity"]
+                            )
+                            self.current_capital -= fees
+                            self.fees += fees
 
                         else:
                             stock_entity.buy(
@@ -212,6 +221,12 @@ class BacktestEngine:
                                 ),
                                 open_position=index,
                             )
+                            # Update capital and fees
+                            self.current_capital -= (
+                                position["stop_loss"] * position["quantity"]
+                            )
+                            self.current_capital -= fees
+                            self.fees += fees
 
                     if self.take_profit_triggered(
                         row["High"],
@@ -219,6 +234,7 @@ class BacktestEngine:
                         position["take_profit"],
                         position["position_type"],
                     ):
+                        fees = self.calculate_fees(row["High"], position["quantity"])
                         if position["position_type"] == constants.LONG_POSITION:
                             stock_entity.sell(
                                 Trade(
@@ -234,6 +250,12 @@ class BacktestEngine:
                                 ),
                                 open_position=index,
                             )
+                            # Update capital and fees
+                            self.current_capital += (
+                                position["take_profit"] * position["quantity"]
+                            )
+                            self.current_capital -= fees
+                            self.fees += fees
                         else:
                             stock_entity.buy(
                                 Trade(
@@ -249,8 +271,14 @@ class BacktestEngine:
                                 ),
                                 open_position=index,
                             )
+                            # Update capital and fees
+                            self.current_capital -= (
+                                position["take_profit"] * position["quantity"]
+                            )
+                            self.current_capital -= fees
+                            self.fees += fees
 
-                # # TODO: implement for trailing stop
+                # TODO: implement for trailing stop
 
                 if row["Date"] in order_records_dict[ticker]:
                     trade_details = self.trade_orders.loc[
@@ -272,17 +300,14 @@ class BacktestEngine:
                     if self.current_capital < (quantity * price) + fees:
                         order_status = constants.ORDER_STATUS_CANCELLED
                         comments = "Insufficient Capital"
-
                     else:
                         if position_type == constants.LONG_POSITION:
                             if price < row["Low"]:
                                 order_status = constants.ORDER_STATUS_CANCELLED
                                 comments = "Bid price is lower than low price"
-
                             else:
                                 # Update capital, fees
-                                self.current_capital -= (quantity * price) + fees
-                                self.fees += fees
+
                                 order_status = constants.ORDER_STATUS_FILLED
                                 stock_entity.buy(
                                     Trade(
@@ -298,15 +323,16 @@ class BacktestEngine:
                                         trade_status=constants.TRADE_STATUS_OPEN,
                                     )
                                 )
+                                self.current_capital -= quantity * price
+                                self.current_capital -= fees
+                                self.fees += fees
                         elif position_type == constants.SHORT_POSITION:
                             if price > row["High"]:
                                 order_status = constants.ORDER_STATUS_CANCELLED
                                 comments = "Ask price is higher than high price"
-
                             else:
                                 # Update capital, fees
-                                self.current_capital -= fees
-                                self.fees += fees
+
                                 order_status = constants.ORDER_STATUS_FILLED
                                 stock_entity.sell(
                                     Trade(
@@ -322,6 +348,10 @@ class BacktestEngine:
                                         trade_status=constants.TRADE_STATUS_OPEN,
                                     )
                                 )
+                                self.current_capital += quantity * price
+                                self.current_capital -= fees
+                                self.fees += fees
+
                     self.update_order_records(
                         date=date,
                         stock=stock,

@@ -1,10 +1,10 @@
 import pandas as pd
 import yfinance as yf
 
-from backtest_engine import BacktestEngine
+from src.backtest_engine import BacktestEngine
 
 # Read Trade Order Data
-trade_orders = pd.read_csv("data_store/order_input/aapl_demo_trade_order.csv")
+trade_orders = pd.read_csv("src/data_store/order_input/aapl_demo_trade_order.csv")
 
 # Convert the 'order_date' column to datetime
 trade_orders["date"] = pd.to_datetime(trade_orders["date"], format="%Y-%m-%d")

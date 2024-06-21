@@ -4,24 +4,26 @@ LONG_POSITION = "long"
 SHORT_POSITION = "short"
 
 # Order Types
-MARKET_ORDER = "market"
-LIMIT_ORDER = "limit"
-STOP_ORDER = "stop"
-STOP_LIMIT_ORDER = "stop_limit"
+MARKET_ORDER = "Market"
+LIMIT_ORDER = "Limit"
+STOP_ORDER = "Stop"
+STOP_LIMIT_ORDER = "Stop Limit"
+TRAILING_STOP_ORDER = "Stop - Trailing Stop"
 
 # Order Status
-ORDER_STATUS_FILLED = "filled"
-ORDER_STATUS_CANCELLED = "cancelled"
+ORDER_STATUS_FILLED = "Filled"
+ORDER_STATUS_CANCELLED = "Cancelled"
+ORDER_STATUS_PENDING = "Pending"
+ORDER_STATUS_EXPIRED = "Expired"
 
 # Trade Status
-TRADE_STATUS_OPEN = "open"
-TRADE_STATUS_CLOSED = "closed"
-
-# Trade Trigger
-TRADE_TRIGGER_STOP_LOSS = "stop_loss"
-TRADE_TRIGGER_TAKE_PROFIT = "take_profit"
-TRADE_TRIGGER_TRAILING_STOP = "trailing_stop"
+TRADE_STATUS_OPEN = "Open"
+TRADE_STATUS_CLOSED = "Closed"
 
 # Trade Actions
-TRADE_ACTION_BUY = "buy"
-TRADE_ACTION_SELL = "sell"
+TRADE_ACTION_BUY = "Buy"
+TRADE_ACTION_SELL = "Sell"
+
+# Time in Force
+TIME_IN_FORCE_DAY = "Day"
+TIME_IN_FORCE_GTC = "Good Till Cancelled"

@@ -1,3 +1,8 @@
+import typing
+from dataclasses import dataclass
+from datetime import datetime
+from typing import List
+
 import pandas as pd
 from tqdm import tqdm
 
@@ -5,369 +10,350 @@ from src import constants
 from src.entity import StockEntity, Trade
 from src.ibkr_fees import calculate_ibkr_fixed_cost
 
-"""
-class for Backtest Engine which takes in a trade order with the following details: 
-Columns = ['stock', 'date', 'quantity', 'price', 'signal_type', 'order_type',
-           'stop_loss', 'take_profit', 'trailing_stop', 'duration']
 
-Example:
-stock = 'AAPL'
-date = '2020-01-01'
-quantity = 100
-price = 100
-signal_type = 'buy'
-order_type = 'market'
-stop_loss = 0.02
-take_profit = 0.02
-trailing_stop = 0.02
-duration = Day/Good Till Cancelled (GTC)/ Pre Market/ Post Market
-"""
+@dataclass
+class Order:
+    order_id: int
+    attached_order: bool
+    ticker: str
+    order_type: str
+    action: str
+    limit_price: float
+    time_in_force: str
+    quantity: float
+    order_date: str = ""
+    stop_price: float = 0.0
+    trail_type: str = ""
+    trail: float = 0.0
+
+    @staticmethod
+    def get_pandas_timestamp(date) -> pd.Timestamp:
+        return pd.Timestamp(date)
 
 
 class BacktestEngine:
+    ORDER_BOOK_COLUMNS = [
+        "order_date",
+        "ticker",
+        "order_type",
+        "action",
+        "price",
+        "quantity",
+        "trail_type",
+        "trail",
+        "time_in_force",
+        "order_status",
+        "comments",
+        "fill_date",
+    ]
+
+    PORTFOLIO_RECORDS_COLUMNS = [
+        "date",
+        "stock",
+        "adjusted_close",
+        "long_position_quantity",
+        "short_position_quantity",
+        "stock_value",
+        "total_fees",
+        "existing_capital",
+        "portfolio_value",
+    ]
+
+    PORTFOLIO_STATS_COLUMNS = [
+        "date",
+        "sharpe",
+        "turnover",
+        "returns",
+        "max_drawdown",
+        "margin",
+        "long_count",
+        "short_count",
+    ]
+
     def __init__(
         self,
-        trade_orders: pd.DataFrame,
+        order_book: pd.DataFrame,
         ohlvc: pd.DataFrame,
-        commission: float = 0.02,
         # slippage=0.0: float,
         initial_capital: float = 100000.0,
     ):
-        self.trade_orders = trade_orders
+        self.order_book = order_book
         self.stocks = {}  # Dictionary to store the stock entities
         self.ohlvc = ohlvc
-        self.commission = commission
-        # self.slippage = slippage
         self.initial_capital = initial_capital
         self.current_capital = initial_capital
         self.fees = 0.0
-        self.order_records = pd.DataFrame(
-            data=[],
-            columns=[
-                "date",
-                "stock",
-                "quantity",
-                "position_type",
-                "price",
-                "fees",
-                "stop_loss",
-                "take_profit",
-                "trailing_stop",
-                "order_status",
-                "comments",
-            ],
-        )
+        self.portfolio_records = self._initialize_dataframe(self.PORTFOLIO_RECORDS_COLUMNS)
+        self.portfolio_stats = self._initialize_dataframe(self.PORTFOLIO_STATS_COLUMNS)
 
-        """
-        Trade Records to track all the BUY & SELL transactions
-        Date: Date of the transaction
-        Stock: Stock symbol
-        Quantity: Number of shares bought/sold
-        Price: Price at which the transaction was made
-        Fee: Commission charged for the transaction
-        Status: Filled/Cancelled
-        """
+        self.order_book["status"] = ""
+        self.order_book["comments"] = ""
+        self.order_book["fill_date"] = ""
 
-        """
-        Trade Positions to track the current positions of the stock
-        Date: Date of the transaction
-        Stock: Stock symbol
-        Quantity: Number of shares bought/sold
-        Average Price: Average price of the stock
-        Current Value: Current value of the stock
-        Close Price: Close price of the stock
-        Stop Loss: Stop loss for the stock
-        Take Profit: Take profit for the stock
-        Trailing Stop: Trailing stop for the stock
-        
-        Possible Params:
-        Position Type: Long/Short
-        Entry Timestamp
-        Average Entry Price
-        Entry Size
-        Exit Timestamp
-        Average Exit Price
-        Exit Size
-        Unrealized PnL
-        Realized PnL
-        Order Status: Open/Closed
-        """
+    @staticmethod
+    def _initialize_dataframe(columns: List[str]) -> pd.DataFrame:
+        return pd.DataFrame(columns=columns)
 
-    def update_order_records(
-        self,
-        date,
-        stock,
-        quantity,
-        position_type,
-        price,
-        fees,
-        # order_type,
-        stop_loss,
-        take_profit,
-        trailing_stop,
-        order_status,
-        comments: str = "",
-        # duration,
-    ):
-        new_trade_record = pd.DataFrame(
+    @staticmethod
+    def calculate_fees(qty, price_per_share):
+        return calculate_ibkr_fixed_cost(qty=qty, price_per_share=price_per_share)
+
+    @staticmethod
+    def stop_loss_trigger(stop_price, action, price):
+        if action == constants.TRADE_ACTION_BUY:
+            return price >= stop_price
+        elif action == constants.TRADE_ACTION_SELL:
+            return price <= stop_price
+
+    def create_limit_order(self, order: Order):
+        # Add order into order book
+        new_order = pd.DataFrame(
             {
-                "date": date,
-                "stock": stock,
-                "quantity": quantity,
-                "position_type": position_type,
-                "price": price,
-                "fees": fees,
-                "stop_loss": stop_loss,
-                "take_profit": take_profit,
-                "trailing_stop": trailing_stop,
-                "order_status": order_status,
-                "comments": comments,
-                # "order_type": order_type,
-                # "duration": duration,
+                "order_id": order.order_id,
+                "order_date": order.order_date,
+                "ticker": order.ticker,
+                "order_type": order.order_type,
+                "action": order.action,
+                "limit_price": order.limit_price,
+                "time_in_force": order.time_in_force,
+                "quantity": order.quantity,
+                "stop_price": order.stop_price,
+                "trail_type": order.trail_type,
+                "trail": order.trail,
+                "attached_order": order.attached_order,
+                "status": constants.ORDER_STATUS_PENDING,
+                "comments": "",
+                "fill_date": "",
             },
             index=[0],
         )
-        if self.order_records.empty:
-            self.order_records = new_trade_record
-        else:
-            self.order_records = pd.concat(
-                [self.order_records, new_trade_record], ignore_index=True
-            )
-    @staticmethod
-    def calculate_fees(price, quantity):
-        return calculate_ibkr_fixed_cost(qty=quantity, price_per_share=price)
 
-    @staticmethod
-    def stop_loss_triggered(high_price, low_price, stop_loss, position_type):
-        if position_type == constants.LONG_POSITION and low_price <= stop_loss:
-            return True
-        elif position_type == constants.SHORT_POSITION and high_price >= stop_loss:
-            return True
+        new_order["order_date"] = pd.to_datetime(new_order["order_date"])
+        if self.order_book.empty:
+            self.order_book = new_order
         else:
-            return False
-
-    @staticmethod
-    def take_profit_triggered(high_price, low_price, take_profit, position_type):
-        if position_type == constants.LONG_POSITION and high_price >= take_profit:
-            return True
-        elif position_type == constants.SHORT_POSITION and low_price <= take_profit:
-            return True
-        else:
-            return False
+            self.order_book = pd.concat([self.order_book, new_order], ignore_index=True)
 
     def backtest(self):
-        """
-        Backtest the trade order
-        Logic:
-            1. Loop through each day in the price data [O]
-            2. Check if any existing trades has hit the stop loss, take profit or trailing stop []
-            3. Check if there are any new trades to be executed [O]
-        """
         # Create StockEntity for each stock and store in the stocks dictionary
-        for stock in self.trade_orders["stock"].unique():
-            self.stocks[stock] = StockEntity(symbol=stock, commission=self.commission)
+        for stock in self.order_book["ticker"].unique():
+            self.stocks[stock] = StockEntity(symbol=stock)
 
-        order_records_dict = {}
+        for current_timestamp, row in tqdm(self.ohlvc.iterrows(), total=len(self.ohlvc)):
+            # Convert current_timestamp to pd.Timestamp type
+            current_timestamp = typing.cast(pd.Timestamp, current_timestamp)
+            # Fetch all pending orders that are earlier or equal to the current timestamp and status not filled or cancelled
+            active_orders = self.order_book[
+                (self.order_book["order_date"] <= current_timestamp)
+                & (self.order_book["status"] != constants.ORDER_STATUS_FILLED)
+                & (self.order_book["status"] != constants.ORDER_STATUS_CANCELLED)
+                & (self.order_book["status"] != constants.ORDER_STATUS_EXPIRED)
+            ]
+            if len(active_orders) != 0:
+                # Using while loop because there are additional orders created and appended into the active_orders df
+                while len(active_orders) != 0:
+                    idx = active_orders.head(1).index[0]
+                    order = active_orders.loc[idx]
 
-        for _, row in self.trade_orders.iterrows():
-            if row["stock"] not in order_records_dict:
-                order_records_dict[row["stock"]] = []
-            order_records_dict[row["stock"]].append(row["date"])
+                    # Fetch Order Details
+                    order_id = order["order_id"]
+                    date = order["order_date"]
+                    symbol = order["ticker"]
+                    order_type = order["order_type"]
+                    action = order["action"]
+                    limit_price = order["limit_price"]
+                    stop_price = order["stop_price"]
+                    quantity = order["quantity"]
+                    trail_type = order["trail_type"]
+                    trail = order["trail"]
+                    time_in_force = order["time_in_force"]
+                    attached_order = order["attached_order"]
+                    order_status = False
+                    msg = ""
 
-        for _, row in tqdm(self.ohlvc.iterrows(), total=len(self.ohlvc)):
-            for ticker, stock_entity in self.stocks.items():
-                # Check if stop_loss is triggered
-                open_positions = stock_entity.get_open_position()
-                for index, position in open_positions.iterrows():
-                    if self.stop_loss_triggered(
-                        row["High"],
-                        row["Low"],
-                        position["stop_loss"],
-                        position["position_type"],
-                    ):
-                        fees = self.calculate_fees(row["High"], position["quantity"])
-                        if position["position_type"] == constants.LONG_POSITION:
-                            stock_entity.sell(
-                                Trade(
-                                    exit_date=row["Date"],
-                                    exit_action=constants.TRADE_ACTION_SELL,
-                                    exit_price=position["stop_loss"],
-                                    quantity=position["quantity"],
-                                    exit_fees=fees,
-                                    trigger=constants.TRADE_TRIGGER_STOP_LOSS,
-                                    trade_status=constants.TRADE_STATUS_CLOSED,
+                    stock_entity = self.stocks[symbol]
+
+                    """
+                    Unattached Order: Orders that are sent to the market without any attached orders
+                    Example: 
+                    1. Long Position: BUY 100 AAPL @ 150
+                    2. Short Position: SELL 100 AAPL @ 170
+                    
+                    Attached Order: Orders that are tagged to an order to act like the stop loss / take profit orders
+                    Example:
+                    1. BUY 100 AAPL @ 150 (Unattached Order)
+                    2. Attached a sell order to the BUY order to sell 100 AAPL @ 170 (Attached Order)
+                    3. Attached a stop limit order to the BUY order to create a limit order of 125 when price goes under 130 (Attached Order)
+                        a. When price reaches 130 --> Stop Limit Order is triggered and a Stop Limit order is created @ 125
+                        b. When price reaches 125 --> Stop Limit Order is executed
+                    """
+
+                    if attached_order:
+                        # If it is a Day order, check if the order is still valid
+                        if time_in_force == constants.TIME_IN_FORCE_DAY:
+                            if current_timestamp.date() != order["order_date"].date():
+                                self.order_book.loc[idx, "status"] = constants.ORDER_STATUS_EXPIRED
+                                self.order_book.loc[idx, "comments"] = "Order Expired"
+                                self.order_book.loc[idx, "fill_date"] = current_timestamp
+                                continue
+
+                        if order_type == constants.LIMIT_ORDER:
+                            order_status, msg = stock_entity.limit_order(
+                                trade=Trade(
+                                    date=date,
+                                    symbol=symbol,
+                                    order_type=order_type,
+                                    action=action,
+                                    limit_price=limit_price,
+                                    quantity=quantity,
+                                    trail_type=trail_type,
+                                    trail=trail,
                                 ),
-                                open_position=index,
+                                high_price=row[symbol]["High"],
+                                low_price=row[symbol]["Low"],
                             )
-                            # Update capital and fees
-                            self.current_capital += (
-                                position["stop_loss"] * position["quantity"]
-                            )
-                            self.current_capital -= fees
-                            self.fees += fees
+                        elif order_type == constants.STOP_LIMIT_ORDER:
+                            if action == constants.TRADE_ACTION_BUY:
+                                if self.stop_loss_trigger(stop_price, action, row[symbol]["High"]):
+                                    self.create_limit_order(
+                                        Order(
+                                            order_id=order_id,
+                                            attached_order=True,
+                                            order_date=current_timestamp.strftime(format="%Y-%m-%d"),
+                                            ticker=symbol,
+                                            order_type=constants.LIMIT_ORDER,
+                                            action=constants.TRADE_ACTION_BUY,
+                                            limit_price=limit_price,
+                                            time_in_force=constants.TIME_IN_FORCE_GTC,  # Defaults to GTC order for now
+                                            quantity=quantity,
+                                        )
+                                    )
+                                    # Update the status of the current order to "Filled"
+                                    self.order_book.loc[idx, "status"] = constants.ORDER_STATUS_FILLED
+                                    self.order_book.loc[idx, "fill_date"] = current_timestamp
+                                    new_order = self.order_book.tail(1)
+                                    active_orders = pd.concat([active_orders, new_order])
 
-                        else:
-                            stock_entity.buy(
-                                Trade(
-                                    exit_date=row["Date"],
-                                    exit_action=constants.TRADE_ACTION_BUY,
-                                    exit_price=position["stop_loss"],
-                                    quantity=position["quantity"],
-                                    exit_fees=self.calculate_fees(
-                                        row["Low"], position["quantity"]
-                                    ),
-                                    trigger=constants.TRADE_TRIGGER_STOP_LOSS,
-                                    trade_status=constants.TRADE_STATUS_CLOSED,
-                                ),
-                                open_position=index,
-                            )
-                            # Update capital and fees
-                            self.current_capital -= (
-                                position["stop_loss"] * position["quantity"]
-                            )
-                            self.current_capital -= fees
-                            self.fees += fees
+                            else:
+                                if self.stop_loss_trigger(stop_price, action, row[symbol]["Low"]):
+                                    self.create_limit_order(
+                                        Order(
+                                            order_id=order_id,
+                                            attached_order=True,
+                                            order_date=current_timestamp.strftime(format="%Y-%m-%d"),
+                                            ticker=symbol,
+                                            order_type=constants.LIMIT_ORDER,
+                                            action=constants.TRADE_ACTION_SELL,
+                                            limit_price=limit_price,
+                                            time_in_force=constants.TIME_IN_FORCE_GTC,  # Defaults to GTC order for now
+                                            quantity=quantity,
+                                            stop_price=0.0,
+                                            trail_type="",
+                                            trail=0.0,
+                                        )
+                                    )
+                                    # Update the status of the current order to "Filled"
+                                    self.order_book.loc[idx, "status"] = constants.ORDER_STATUS_FILLED
+                                    self.order_book.loc[idx, "fill_date"] = current_timestamp
+                                    # Append the new order to the active orders df
+                                    new_order = self.order_book.tail(1)
+                                    active_orders = pd.concat([active_orders, new_order])
 
-                    if self.take_profit_triggered(
-                        row["High"],
-                        row["Low"],
-                        position["take_profit"],
-                        position["position_type"],
-                    ):
-                        fees = self.calculate_fees(row["High"], position["quantity"])
-                        if position["position_type"] == constants.LONG_POSITION:
-                            stock_entity.sell(
-                                Trade(
-                                    exit_date=row["Date"],
-                                    exit_action=constants.TRADE_ACTION_SELL,
-                                    exit_price=position["take_profit"],
-                                    quantity=position["quantity"],
-                                    exit_fees=self.calculate_fees(
-                                        row["High"], position["quantity"]
-                                    ),
-                                    trigger=constants.TRADE_TRIGGER_TAKE_PROFIT,
-                                    trade_status=constants.TRADE_STATUS_CLOSED,
-                                ),
-                                open_position=index,
-                            )
-                            # Update capital and fees
-                            self.current_capital += (
-                                position["take_profit"] * position["quantity"]
-                            )
-                            self.current_capital -= fees
-                            self.fees += fees
-                        else:
-                            stock_entity.buy(
-                                Trade(
-                                    exit_date=row["Date"],
-                                    exit_action=constants.TRADE_ACTION_BUY,
-                                    exit_price=position["take_profit"],
-                                    quantity=position["quantity"],
-                                    exit_fees=self.calculate_fees(
-                                        row["High"], position["quantity"]
-                                    ),
-                                    trigger=constants.TRADE_TRIGGER_TAKE_PROFIT,
-                                    trade_status=constants.TRADE_STATUS_CLOSED,
-                                ),
-                                open_position=index,
-                            )
-                            # Update capital and fees
-                            self.current_capital -= (
-                                position["take_profit"] * position["quantity"]
-                            )
-                            self.current_capital -= fees
-                            self.fees += fees
+                        # Check if attached order is filled
+                        if order_status:
+                            self.order_book.loc[idx, "status"] = constants.ORDER_STATUS_FILLED
+                            self.order_book.loc[idx, "fill_date"] = current_timestamp
+                            # Find index of the other attached_order with the same order id and update status to cancelled
+                            attached_order_idx_list = self.order_book[
+                                (self.order_book["order_id"] == order_id)
+                                & (self.order_book["status"] == constants.ORDER_STATUS_PENDING)
+                            ].index.tolist()
+                            if len(attached_order_idx_list) != 0:
+                                for order_idx in attached_order_idx_list:
+                                    self.order_book.loc[order_idx, "status"] = constants.ORDER_STATUS_CANCELLED
+                                    self.order_book.loc[order_idx, "comments"] = "Attached Order Cancelled"
+                                    self.order_book.loc[order_idx, "fill_date"] = current_timestamp
 
-                # TODO: implement for trailing stop
-
-                if row["Date"] in order_records_dict[ticker]:
-                    trade_details = self.trade_orders.loc[
-                        self.trade_orders["date"] == row["Date"]
-                    ].squeeze()
-                    date = trade_details["date"]
-                    stock = trade_details["stock"]
-                    quantity = trade_details["quantity"]
-                    position_type = trade_details["position_type"]
-                    price = trade_details["price"]
-                    stop_loss = trade_details["stop_loss"]
-                    take_profit = trade_details["take_profit"]
-                    trailing_stop = trade_details["trailing_stop"]
-                    order_status = ""
-                    comments = ""
-
-                    # Check if there is sufficient capital to execute the trade
-                    fees = self.calculate_fees(price, quantity)
-                    if self.current_capital < (quantity * price) + fees:
-                        order_status = constants.ORDER_STATUS_CANCELLED
-                        comments = "Insufficient Capital"
                     else:
-                        if position_type == constants.LONG_POSITION:
-                            if price < row["Low"]:
-                                order_status = constants.ORDER_STATUS_CANCELLED
-                                comments = "Bid price is lower than low price"
-                            else:
-                                # Update capital, fees
+                        # If it is a Day order, check if the order is still valid
+                        if time_in_force == constants.TIME_IN_FORCE_DAY:
+                            if current_timestamp.date() != order["order_date"].date():
+                                self.order_book.loc[idx, "status"] = constants.ORDER_STATUS_EXPIRED
+                                self.order_book.loc[idx, "comments"] = "Order Expired"
+                                self.order_book.loc[idx, "fill_date"] = current_timestamp
+                                continue
 
-                                order_status = constants.ORDER_STATUS_FILLED
-                                stock_entity.buy(
-                                    Trade(
-                                        entry_date=date,
-                                        position_type=position_type,
-                                        entry_action=constants.TRADE_ACTION_BUY,
-                                        entry_price=price,
+                            if order_type == constants.LIMIT_ORDER:
+                                order_status, msg = stock_entity.limit_order(
+                                    trade=Trade(
+                                        date=date,
+                                        symbol=symbol,
+                                        order_type=order_type,
+                                        action=action,
+                                        limit_price=limit_price,
                                         quantity=quantity,
-                                        entry_fees=fees,
-                                        stop_loss=stop_loss,
-                                        take_profit=take_profit,
-                                        trailing_stop=trailing_stop,
-                                        trade_status=constants.TRADE_STATUS_OPEN,
-                                    )
+                                        trail_type=trail_type,
+                                        trail=trail,
+                                    ),
+                                    high_price=row[symbol]["High"],
+                                    low_price=row[symbol]["Low"],
                                 )
-                                self.current_capital -= quantity * price
-                                self.current_capital -= fees
-                                self.fees += fees
-                        elif position_type == constants.SHORT_POSITION:
-                            if price > row["High"]:
-                                order_status = constants.ORDER_STATUS_CANCELLED
-                                comments = "Ask price is higher than high price"
+
+                            if order_status:
+                                self.order_book.loc[idx, "status"] = constants.ORDER_STATUS_FILLED
+                                self.order_book.loc[idx, "fill_date"] = current_timestamp
+                                # Find the attached orders and mark the status and pending
+                                attached_order_idx_list = self.order_book[
+                                    (self.order_book["order_id"] == order_id) & (self.order_book.index != idx)
+                                ].index.tolist()
+                                if len(attached_order_idx_list) != 0:
+                                    # Send all the attached orders to "Pending"
+                                    for order_idx in attached_order_idx_list:
+                                        self.order_book.loc[order_idx, "status"] = constants.ORDER_STATUS_PENDING
+                                        self.order_book.loc[order_idx, "order_date"] = current_timestamp
+
                             else:
-                                # Update capital, fees
+                                self.order_book.loc[idx, "status"] = constants.ORDER_STATUS_CANCELLED
+                                self.order_book.loc[idx, "comments"] = msg
+                                self.order_book.loc[idx, "fill_date"] = current_timestamp
+                                # Cancel the attached orders
+                                attached_order_idx_list = self.order_book[
+                                    (self.order_book["order_id"] == order_id) & (self.order_book.index != idx)
+                                ].index.tolist()
+                                if len(attached_order_idx_list) != 0:
+                                    # Send all the attached orders to "Cancelled"
+                                    for order_idx in attached_order_idx_list:
+                                        self.order_book.loc[order_idx, "status"] = constants.ORDER_STATUS_CANCELLED
+                                        self.order_book.loc[order_idx, "fill_date"] = current_timestamp
+                                        self.order_book.loc[order_idx, "comments"] = "Original Order Cancelled"
 
-                                order_status = constants.ORDER_STATUS_FILLED
-                                stock_entity.sell(
-                                    Trade(
-                                        entry_date=date,
-                                        position_type=position_type,
-                                        entry_action=constants.TRADE_ACTION_SELL,
-                                        entry_price=price,
-                                        quantity=quantity,
-                                        entry_fees=fees,
-                                        stop_loss=stop_loss,
-                                        take_profit=take_profit,
-                                        trailing_stop=trailing_stop,
-                                        trade_status=constants.TRADE_STATUS_OPEN,
+                        elif time_in_force == constants.TIME_IN_FORCE_GTC:
+                            if order_type == constants.LIMIT_ORDER:
+                                if order_type == constants.LIMIT_ORDER:
+                                    order_status, msg = stock_entity.limit_order(
+                                        trade=Trade(
+                                            date=date,
+                                            symbol=symbol,
+                                            order_type=order_type,
+                                            action=action,
+                                            limit_price=limit_price,
+                                            quantity=quantity,
+                                            trail_type=trail_type,
+                                            trail=trail,
+                                        ),
+                                        high_price=row[symbol]["High"],
+                                        low_price=row[symbol]["Low"],
                                     )
-                                )
-                                self.current_capital += quantity * price
-                                self.current_capital -= fees
-                                self.fees += fees
-
-                    self.update_order_records(
-                        date=date,
-                        stock=stock,
-                        quantity=quantity,
-                        position_type=position_type,
-                        price=price,
-                        fees=fees,
-                        # order_type=order_type,
-                        stop_loss=stop_loss,
-                        take_profit=take_profit,
-                        trailing_stop=trailing_stop,
-                        order_status=order_status,
-                        comments=comments,
-                        # duration=duration,
-                    )
-
-                stock_entity.update_historical_records(
-                    date=row["Date"], adjusted_close=row["Close"]
-                )
+                            if order_status:
+                                self.order_book.loc[idx, "status"] = constants.ORDER_STATUS_FILLED
+                                self.order_book.loc[idx, "fill_date"] = current_timestamp
+                                # Find the attached orders and mark the status and pending
+                                attached_order_idx_list = self.order_book[
+                                    (self.order_book["order_id"] == order_id) & (self.order_book.index != idx)
+                                ].index.tolist()
+                                if len(attached_order_idx_list) != 0:
+                                    for order_idx in attached_order_idx_list:
+                                        self.order_book.loc[order_idx, "status"] = constants.ORDER_STATUS_PENDING
+                                        self.order_book.loc[order_idx, "order_date"] = current_timestamp
+                    # Remove row from df
+                    active_orders = active_orders.drop(index=idx)

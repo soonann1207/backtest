@@ -1,0 +1,16 @@
+order_id,attached_order,order_date,ticker,order_type,action,limit_price,stop_price,quantity,trail_type,trail,time_in_force
+1,FALSE,2022-08-10,AAPL,Limit,Buy,167.58,,10,,,Day
+1,TRUE,,AAPL,Stop Limit,Sell,159,159.2,10,value,5,Good Till Cancelled
+1,TRUE,,AAPL,Limit,Sell,175.96,,10,,,Good Till Cancelled
+2,FALSE,2022-08-15,AAPL,Limit,Buy,150,,10,,,Good Till Cancelled
+2,TRUE,,AAPL,Stop Limit,Sell,144,145,10,value,5,Good Till Cancelled
+2,TRUE,,AAPL,Limit,Sell,155,,10,,,Good Till Cancelled
+3,FALSE,2022-09-19,AAPL,Limit,Buy,152.96,,10,,,Day
+3,TRUE,,AAPL,Stop Limit,Sell,145.31,146,10,value,5,Good Till Cancelled
+3,TRUE,,AAPL,Limit,Sell,160.61,,10,,,Good Till Cancelled
+4,FALSE,2023-12-08,AAPL,Limit,Sell,195.2,,10,,,Day
+4,TRUE,,AAPL,Stop Limit,Buy,204.5,204.96,10,value,5,Good Till Cancelled
+4,TRUE,,AAPL,Limit,Buy,185.44,,10,,,Good Till Cancelled
+5,FALSE,2023-12-12,AAPL,Limit,Sell,195,,10,,,Day
+5,TRUE,,AAPL,Stop Limit,Buy,200,200,10,value,5,Good Till Cancelled
+5,TRUE,,AAPL,Limit,Buy,190,,10,,,Good Till Cancelled

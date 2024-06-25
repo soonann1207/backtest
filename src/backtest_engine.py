@@ -74,7 +74,6 @@ class BacktestEngine:
         self,
         order_book: pd.DataFrame,
         ohlvc: pd.DataFrame,
-        # slippage=0.0: float,
         initial_capital: float = 100000.0,
     ):
         self.order_book = order_book.copy()
@@ -142,6 +141,14 @@ class BacktestEngine:
                 return price - (price * trail / 100)
 
     def create_limit_order(self, order: Order):
+        """
+        Create a limit order and append it to the order book
+
+        Limit order will only execute when the price reaches the limit price
+
+        :param order:
+        :return:
+        """
         # Add order into order book
         new_order = pd.DataFrame(
             {
@@ -403,3 +410,5 @@ class BacktestEngine:
                                     self.order_book.loc[order_idx, "order_date"] = current_timestamp
                 # Remove row from df
                 active_orders = active_orders.drop(index=idx)
+
+            # Update Portfolio Records

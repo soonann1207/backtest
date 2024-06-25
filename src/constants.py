@@ -8,7 +8,11 @@ MARKET_ORDER = "Market"
 LIMIT_ORDER = "Limit"
 STOP_ORDER = "Stop"
 STOP_LIMIT_ORDER = "Stop Limit"
-TRAILING_STOP_ORDER = "Stop - Trailing Stop"
+TRAILING_STOP_ORDER = "Trailing Stop"
+
+# Trail Types
+TRAIL_TYPE_VALUE = "Value"
+TRAIL_TYPE_PERCENTAGE = "Percentage"
 
 # Order Status
 ORDER_STATUS_FILLED = "Filled"
@@ -27,3 +31,7 @@ TRADE_ACTION_SELL = "Sell"
 # Time in Force
 TIME_IN_FORCE_DAY = "Day"
 TIME_IN_FORCE_GTC = "Good Till Cancelled"
+
+
+# Stop Loss Triggers
+STOP_LOST_TRIGGERS = [TRAILING_STOP_ORDER, STOP_ORDER, STOP_LIMIT_ORDER]

@@ -14,9 +14,6 @@ class Trade:
     action: str
     limit_price: float
     quantity: float
-    stop_price: float = 0.0
-    trail_type: str = ""
-    trail: float = 0.0
 
 
 @dataclass
@@ -29,22 +26,12 @@ class HistoricalRecord:
 
 class StockEntity:
     TRADE_COLUMNS = [
-        "entry_date",
-        "position_type",
-        "entry_action",
-        "entry_price",
+        "date",
+        "symbol",
+        "order_type",
+        "action",
+        "limit_price",
         "quantity",
-        "entry_fees",
-        "stop_loss",
-        "take_profit",
-        "trailing_stop",
-        "exit_date",
-        "exit_action",
-        "exit_price",
-        "exit_fees",
-        "trigger",
-        "pnl",
-        "trade_status",
     ]
 
     HISTORICAL_RECORD_COLUMNS = [
@@ -81,16 +68,6 @@ class StockEntity:
             return (exit_quantity * exit_price) - (entry_quantity * entry_price) - entry_fees - exit_fees
         else:
             return (entry_quantity * entry_price) - (exit_quantity * exit_price) - entry_fees - exit_fees
-
-    def select_order_function(self, order_type: str) -> Callable:
-        if order_type == constants.LIMIT_ORDER:
-            return self.limit_order
-        elif order_type == constants.MARKET_ORDER:
-            return self.market_order
-        elif order_type == constants.STOP_ORDER:
-            return self.stop_order
-        else:
-            raise ValueError(f"Order type {order_type} not supported")
 
     # TODO: Add a method for Limit Order, Stop Order and Market Order
     def limit_order(

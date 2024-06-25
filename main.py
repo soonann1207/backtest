@@ -34,3 +34,5 @@ backtest_engine = BacktestEngine(
 backtest_engine.backtest()
 order_book = backtest_engine.order_book
 order_book = order_book.sort_values(by=["order_id", "order_date"])
+aapl = backtest_engine.stocks["AAPL"]
+aapl_trades = aapl.trades

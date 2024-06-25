@@ -87,8 +87,9 @@ class StockEntity:
 
         return False, "Ask/Bid price is not met"
 
-    def market_order(self, trade: Trade):
-        pass
+    def market_order(self, trade: Trade) -> Tuple[bool, str]:
+        self.update_trades(trade)
+        return True, ""
 
     def update_trades(self, trade: Trade):
         # No open position, add new row to add new trade

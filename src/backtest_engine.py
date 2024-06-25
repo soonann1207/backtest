@@ -43,8 +43,9 @@ class BacktestEngine:
         "trail",
         "time_in_force",
         "order_status",
-        "comments",
+        "filled_price",
         "filled_date",
+        "comments",
     ]
 
     PORTFOLIO_RECORDS_COLUMNS = [
@@ -88,6 +89,7 @@ class BacktestEngine:
         self.order_book["status"] = ""
         self.order_book["comments"] = ""
         self.order_book["filled_date"] = ""
+        self.order_book["filled_price"] = ""
 
     @staticmethod
     def _initialize_dataframe(columns: List[str]) -> pd.DataFrame:
@@ -212,6 +214,7 @@ class BacktestEngine:
                 attached_order = order["attached_order"]
                 order_status = False
                 msg = ""
+                filled_price = 0.0
 
                 stock_entity = self.stocks[symbol]
 
@@ -252,6 +255,19 @@ class BacktestEngine:
                             high_price=row[symbol]["High"],
                             low_price=row[symbol]["Low"],
                         )
+                        filled_price = limit_price
+                    elif order_type == constants.MARKET_ORDER:
+                        order_status, msg = stock_entity.market_order(
+                            trade=Trade(
+                                date=date,
+                                symbol=symbol,
+                                order_type=order_type,
+                                action=action,
+                                limit_price=row[symbol]["Open"],  # Use Open price as the limit price for Market Order
+                                quantity=quantity,
+                            )
+                        )
+                        filled_price = row[symbol]["Open"]
                     elif order_type in constants.STOP_LOST_TRIGGERS:
                         if action == constants.TRADE_ACTION_BUY:
                             if self.stop_loss_trigger(stop_price=stop_price, action=action, price=row[symbol]["High"]):
@@ -320,6 +336,7 @@ class BacktestEngine:
                     if order_status:
                         self.order_book.loc[idx, "status"] = constants.ORDER_STATUS_FILLED
                         self.order_book.loc[idx, "filled_date"] = current_timestamp
+                        self.order_book.loc[idx, "filled_price"] = filled_price
                         # Find index of the other attached_order with the same order id and update status to cancelled
                         attached_order_idx_list = self.order_book[
                             (self.order_book["order_id"] == order_id)
@@ -353,10 +370,23 @@ class BacktestEngine:
                                 high_price=row[symbol]["High"],
                                 low_price=row[symbol]["Low"],
                             )
-
+                            filled_price = limit_price
+                        elif order_type == constants.MARKET_ORDER:
+                            order_status, msg = stock_entity.market_order(
+                                trade=Trade(
+                                    date=date,
+                                    symbol=symbol,
+                                    order_type=order_type,
+                                    action=action,
+                                    limit_price=row[symbol]["Open"],  # Use Open price as the limit price
+                                    quantity=quantity,
+                                )
+                            )
+                            filled_price = row[symbol]["Open"]
                         if order_status:
                             self.order_book.loc[idx, "status"] = constants.ORDER_STATUS_FILLED
                             self.order_book.loc[idx, "filled_date"] = current_timestamp
+                            self.order_book.loc[idx, "filled_price"] = filled_price
                             # Find the attached orders and mark the status and pending
                             attached_order_idx_list = self.order_book[
                                 (self.order_book["order_id"] == order_id) & (self.order_book.index != idx)
@@ -397,9 +427,23 @@ class BacktestEngine:
                                     high_price=row[symbol]["High"],
                                     low_price=row[symbol]["Low"],
                                 )
+                                filled_price = limit_price
+                            elif order_type == constants.MARKET_ORDER:
+                                order_status, msg = stock_entity.market_order(
+                                    trade=Trade(
+                                        date=date,
+                                        symbol=symbol,
+                                        order_type=order_type,
+                                        action=action,
+                                        limit_price=row[symbol]["Open"],  # Use Open price as the limit price
+                                        quantity=quantity,
+                                    )
+                                )
+                                filled_price = row[symbol]["Open"]
                         if order_status:
                             self.order_book.loc[idx, "status"] = constants.ORDER_STATUS_FILLED
                             self.order_book.loc[idx, "filled_date"] = current_timestamp
+                            self.order_book.loc[idx, "filled_price"] = filled_price
                             # Find the attached orders and mark the status and pending
                             attached_order_idx_list = self.order_book[
                                 (self.order_book["order_id"] == order_id) & (self.order_book.index != idx)

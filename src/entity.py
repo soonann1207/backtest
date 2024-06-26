@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Tuple, Callable, Optional
+from typing import List, Tuple
 
 import pandas as pd
 
@@ -77,11 +77,11 @@ class StockEntity:
         low_price: float,
     ) -> Tuple[bool, str]:
         if trade.action == constants.TRADE_ACTION_BUY:
-            if trade.limit_price >= low_price:
+            if high_price >= trade.limit_price >= low_price:
                 self.update_trades(trade)
                 return True, ""
         elif trade.action == constants.TRADE_ACTION_SELL:
-            if trade.limit_price <= high_price:
+            if low_price <= trade.limit_price <= high_price:
                 self.update_trades(trade)
                 return True, ""
 

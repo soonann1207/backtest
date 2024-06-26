@@ -138,9 +138,9 @@ class BacktestEngine:
                 return price - trail
         elif trail_type == constants.TRAIL_TYPE_PERCENTAGE:
             if action == constants.TRADE_ACTION_BUY:
-                return price + (price * trail / 100)
+                return price + (1 + trail)
             elif action == constants.TRADE_ACTION_SELL:
-                return price - (price * trail / 100)
+                return price * (1 - trail)
 
     def create_limit_order(self, order: Order):
         """
@@ -179,21 +179,27 @@ class BacktestEngine:
         else:
             self.order_book = pd.concat([self.order_book, new_order], ignore_index=True)
 
-    def backtest(self):
-        # Create StockEntity for each stock and store in the stocks dictionary
+    def get_active_orders(self, current_timestamp):
+        return self.order_book[
+            (self.order_book["order_date"] <= current_timestamp)
+            & (self.order_book["status"] != constants.ORDER_STATUS_FILLED)
+            & (self.order_book["status"] != constants.ORDER_STATUS_CANCELLED)
+            & (self.order_book["status"] != constants.ORDER_STATUS_EXPIRED)
+        ]
+
+    def initialize_stocks(self):
         for stock in self.order_book["ticker"].unique():
             self.stocks[stock] = StockEntity(symbol=stock)
+
+    def backtest(self):
+        # Create StockEntity for each stock and store in the stocks dictionary
+        self.initialize_stocks()
 
         for current_timestamp, row in tqdm(self.ohlvc.iterrows(), total=len(self.ohlvc)):
             # Convert current_timestamp to pd.Timestamp type
             current_timestamp = typing.cast(pd.Timestamp, current_timestamp)
             # Fetch all pending orders that are earlier or equal to the current timestamp and status not filled or cancelled
-            active_orders = self.order_book[
-                (self.order_book["order_date"] <= current_timestamp)
-                & (self.order_book["status"] != constants.ORDER_STATUS_FILLED)
-                & (self.order_book["status"] != constants.ORDER_STATUS_CANCELLED)
-                & (self.order_book["status"] != constants.ORDER_STATUS_EXPIRED)
-            ]
+            active_orders = self.get_active_orders(current_timestamp)
             # Using while loop because there are additional orders created and appended into the active_orders df
             while len(active_orders) != 0:
                 idx = active_orders.head(1).index[0]
@@ -206,6 +212,7 @@ class BacktestEngine:
                 order_type = order["order_type"]
                 action = order["action"]
                 limit_price = order["limit_price"]
+                limit_offset = order["limit_offset"]
                 stop_price = order["stop_price"]
                 quantity = order["quantity"]
                 trail_type = order["trail_type"]
@@ -215,7 +222,6 @@ class BacktestEngine:
                 order_status = False
                 msg = ""
                 filled_price = 0.0
-
                 stock_entity = self.stocks[symbol]
 
                 """
@@ -270,6 +276,22 @@ class BacktestEngine:
                         filled_price = row[symbol]["Open"]
                     elif order_type in constants.STOP_LOST_TRIGGERS:
                         if action == constants.TRADE_ACTION_BUY:
+                            if order_type in [constants.TRAILING_STOP_ORDER, constants.TRAILING_STOP_LIMIT_ORDER]:
+                                new_stop_price = min(
+                                    self.update_trailing_stop_price(
+                                        trail_type=trail_type, trail=trail, action=action, price=row[symbol]["High"]
+                                    ),
+                                    stop_price,
+                                )
+                                new_limit_price = (
+                                    new_stop_price + limit_offset
+                                )  # Limit Price = Stop Price - Limit Offset
+                                self.order_book.at[idx, "stop_price"] = new_stop_price
+                                self.order_book.at[idx, "limit_price"] = new_limit_price
+                                # Update Active Orders stop and limit price
+                                active_orders.loc[idx, "stop_price"] = new_stop_price
+                                active_orders.loc[idx, "limit_price"] = new_limit_price
+
                             if self.stop_loss_trigger(stop_price=stop_price, action=action, price=row[symbol]["High"]):
                                 self.create_limit_order(
                                     Order(
@@ -290,17 +312,27 @@ class BacktestEngine:
                                 new_order = self.order_book.tail(1)
                                 active_orders = pd.concat([active_orders, new_order])
 
-                            elif order_type == constants.TRAILING_STOP_ORDER:
-                                # TODO: check if we need to see if it is triggered on the same day or not
-                                new_stop_price = self.update_trailing_stop_price(
-                                    trail_type=trail_type, trail=trail, action=action, price=row[symbol]["High"]
-                                )
-                                self.order_book.at[idx, "stop_price"] = min(new_stop_price, stop_price)
-                                self.order_book.at[idx, "limit_price"] = min(
-                                    new_stop_price, stop_price
-                                )  # limit price set to stop price for now
-
                         else:
+                            if order_type in [constants.TRAILING_STOP_ORDER, constants.TRAILING_STOP_LIMIT_ORDER]:
+                                # TODO: check if we need to see if it is triggered on the same day or not
+                                new_stop_price = max(
+                                    self.update_trailing_stop_price(
+                                        trail_type=trail_type, trail=trail, action=action, price=row[symbol]["High"]
+                                    ),
+                                    stop_price,
+                                )
+                                new_limit_price = (
+                                    new_stop_price - limit_offset
+                                )  # Limit Price = Stop Price - Limit Offset
+
+                                # Update Order Book stop and limit price
+
+                                self.order_book.at[idx, "stop_price"] = new_stop_price
+                                self.order_book.at[idx, "limit_price"] = new_limit_price
+                                # Update Active Orders stop and limit price
+                                active_orders.loc[idx, "stop_price"] = new_stop_price
+                                active_orders.loc[idx, "limit_price"] = new_limit_price
+
                             if self.stop_loss_trigger(stop_price=stop_price, action=action, price=row[symbol]["Low"]):
                                 self.create_limit_order(
                                     Order(
@@ -321,16 +353,6 @@ class BacktestEngine:
                                 # Append the new order to the active orders df
                                 new_order = self.order_book.tail(1)
                                 active_orders = pd.concat([active_orders, new_order])
-
-                            elif order_type == constants.TRAILING_STOP_ORDER:
-                                # TODO: check if we need to see if it is triggered on the same day or not
-                                new_stop_price = self.update_trailing_stop_price(
-                                    trail_type=trail_type, trail=trail, action=action, price=row[symbol]["High"]
-                                )
-                                self.order_book.at[idx, "stop_price"] = max(new_stop_price, stop_price)
-                                self.order_book.at[idx, "limit_price"] = max(
-                                    new_stop_price, stop_price
-                                )  # limit price set to stop price for now
 
                     # Check if attached order is filled
                     if order_status:
@@ -396,6 +418,9 @@ class BacktestEngine:
                                 for order_idx in attached_order_idx_list:
                                     self.order_book.loc[order_idx, "status"] = constants.ORDER_STATUS_PENDING
                                     self.order_book.loc[order_idx, "order_date"] = current_timestamp
+                                    # Add orders into active_orders to check if limit or stop loss orders triggered on the same day
+                                    new_order = self.order_book.loc[[order_idx]]
+                                    active_orders = pd.concat([active_orders, new_order])
 
                         else:
                             self.order_book.loc[idx, "status"] = constants.ORDER_STATUS_CANCELLED

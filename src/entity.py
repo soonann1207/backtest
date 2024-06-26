@@ -112,9 +112,18 @@ class StockEntity:
             self.holding_records = pd.concat([self.holding_records, new_record], ignore_index=True)
 
         # Calculate daily returns
-        # TODO: check this
+        # TODO: check how to calculate for short positions
         self.holding_records["daily_returns"] = self.holding_records["portfolio_value"].pct_change().fillna(0)
 
         # Correct daily returns where the previous day's portfolio value was zero
         previous_portfolio_value = self.holding_records["portfolio_value"].shift(1)
         self.holding_records.loc[previous_portfolio_value == 0, "daily_returns"] = 0
+
+        # Adjust returns for short positions
+        short_return_indices = self.holding_records["quantity"] < 0
+        self.holding_records.loc[short_return_indices, "daily_returns"] *= -1
+
+        # Format the daily returns to avoid negative zero
+        self.holding_records["daily_returns"] = self.holding_records["daily_returns"].apply(
+            lambda x: 0 if x == -0 else x
+        )

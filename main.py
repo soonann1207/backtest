@@ -9,6 +9,12 @@ trade_orders = pd.read_csv("src/data_store/order_input/aapl_demo_trade_order_v2.
 # Convert the 'order_date' column to datetime
 trade_orders["order_date"] = pd.to_datetime(trade_orders["order_date"], format="%Y-%m-%d")
 
+trade_orders["limit_offset"] = trade_orders["limit_offset"].fillna(0.0)
+trade_orders["limit_price"] = trade_orders["limit_price"].fillna(0.0)
+trade_orders["stop_price"] = trade_orders["stop_price"].fillna(0.0)
+trade_orders["trail_type"] = trade_orders["trail_type"].fillna("N.A.")
+
+
 # Fetching data for three stocks
 symbols = ["AAPL", "GOOGL", "MSFT"]
 dfs = []
@@ -36,3 +42,4 @@ order_book = backtest_engine.order_book
 order_book = order_book.sort_values(by=["order_id", "order_date"])
 aapl = backtest_engine.stocks["AAPL"]
 aapl_trades = aapl.trades
+aapl_historical_records = aapl.holding_records

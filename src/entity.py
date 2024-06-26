@@ -17,11 +17,11 @@ class Trade:
 
 
 @dataclass
-class HistoricalRecord:
+class HoldingRecords:
     date: str
     adjusted_close: float
-    quantity: int
-    value: float
+    quantity: float
+    portfolio_value: float
 
 
 class StockEntity:
@@ -34,20 +34,12 @@ class StockEntity:
         "quantity",
     ]
 
-    HISTORICAL_RECORD_COLUMNS = [
-        "date",
-        "adjusted_close",
-        "long_position_quantity",
-        "short_position_quantity",
-        "value",
-    ]
+    HOLDING_RECORDS_COLUMNS = ["date", "adjusted_close", "quantity", "portfolio_value", "daily_returns"]
 
     def __init__(self, symbol: str):
         self.symbol = symbol
         self.trades = self._initialize_dataframe(self.TRADE_COLUMNS)
-        # self.historical_records = self._initialize_dataframe(
-        #     self.HISTORICAL_RECORD_COLUMNS
-        # )
+        self.holding_records = self._initialize_dataframe(self.HOLDING_RECORDS_COLUMNS)
 
     @staticmethod
     def _initialize_dataframe(columns: List[str]) -> pd.DataFrame:
@@ -98,3 +90,31 @@ class StockEntity:
         else:
             new_trade = pd.DataFrame([trade.__dict__]).dropna(axis=1)
             self.trades = pd.concat([self.trades, new_trade], ignore_index=True)
+
+    def update_holding_records(self, timestamp, price):
+        long_positions = self.trades[self.trades["action"] == constants.TRADE_ACTION_BUY]
+        short_positions = self.trades[self.trades["action"] == constants.TRADE_ACTION_SELL]
+        long_position_quantity = long_positions["quantity"].sum()
+        short_position_quantity = short_positions["quantity"].sum()
+        net_position = long_position_quantity - short_position_quantity
+
+        holding_records = HoldingRecords(
+            date=timestamp,
+            adjusted_close=price,
+            quantity=net_position,
+            portfolio_value=net_position * price,
+        )
+
+        if self.holding_records.empty:
+            self.holding_records = pd.DataFrame([holding_records.__dict__])
+        else:
+            new_record = pd.DataFrame([holding_records.__dict__]).dropna(axis=1)
+            self.holding_records = pd.concat([self.holding_records, new_record], ignore_index=True)
+
+        # Calculate daily returns
+        # TODO: check this
+        self.holding_records["daily_returns"] = self.holding_records["portfolio_value"].pct_change().fillna(0)
+
+        # Correct daily returns where the previous day's portfolio value was zero
+        previous_portfolio_value = self.holding_records["portfolio_value"].shift(1)
+        self.holding_records.loc[previous_portfolio_value == 0, "daily_returns"] = 0

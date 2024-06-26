@@ -481,3 +481,5 @@ class BacktestEngine:
                 active_orders = active_orders.drop(index=idx)
 
             # Update Portfolio Records
+            for ticker, stock_entity in self.stocks.items():
+                stock_entity.update_holding_records(timestamp=current_timestamp, price=row[ticker]["Adj Close"])

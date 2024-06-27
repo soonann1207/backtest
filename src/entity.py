@@ -14,6 +14,7 @@ class Trade:
     action: str
     limit_price: float
     quantity: float
+    fees: float
 
 
 @dataclass
@@ -55,13 +56,12 @@ class StockEntity:
         exit_fees,
         position_type,
     ):
-        # TODO: check if pnl should include calculation for fees
+
         if position_type == constants.LONG_POSITION:
             return (exit_quantity * exit_price) - (entry_quantity * entry_price) - entry_fees - exit_fees
         else:
             return (entry_quantity * entry_price) - (exit_quantity * exit_price) - entry_fees - exit_fees
 
-    # TODO: Add a method for Limit Order, Stop Order and Market Order
     def limit_order(
         self,
         trade: Trade,

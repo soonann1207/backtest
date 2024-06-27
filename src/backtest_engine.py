@@ -50,14 +50,8 @@ class BacktestEngine:
 
     PORTFOLIO_RECORDS_COLUMNS = [
         "date",
-        "stock",
-        "adjusted_close",
-        "long_position_quantity",
-        "short_position_quantity",
-        "stock_value",
         "total_fees",
-        "existing_capital",
-        "portfolio_value",
+        "capital",
     ]
 
     PORTFOLIO_STATS_COLUMNS = [
@@ -191,6 +185,30 @@ class BacktestEngine:
         for stock in self.order_book["ticker"].unique():
             self.stocks[stock] = StockEntity(symbol=stock)
 
+    def update_portfolio_records(self, current_timestamp):
+        if self.portfolio_records.empty:
+            self.portfolio_records = pd.DataFrame(
+                {
+                    "date": [current_timestamp],
+                    "total_fees": [self.fees],
+                    "capital": [self.current_capital],
+                }
+            )
+        else:
+            self.portfolio_records = pd.concat(
+                [
+                    self.portfolio_records,
+                    pd.DataFrame(
+                        {
+                            "date": [current_timestamp],
+                            "total_fees": [self.fees],
+                            "capital": [self.current_capital],
+                        }
+                    ),
+                ],
+                ignore_index=True,
+            )
+
     def backtest(self):
         # Create StockEntity for each stock and store in the stocks dictionary
         self.initialize_stocks()
@@ -249,6 +267,7 @@ class BacktestEngine:
                             continue
 
                     if order_type == constants.LIMIT_ORDER:
+                        filled_price = limit_price
                         order_status, msg = stock_entity.limit_order(
                             trade=Trade(
                                 date=date,
@@ -257,12 +276,13 @@ class BacktestEngine:
                                 action=action,
                                 limit_price=limit_price,
                                 quantity=quantity,
+                                fees=self.calculate_fees(qty=quantity, price_per_share=filled_price),
                             ),
                             high_price=row[symbol]["High"],
                             low_price=row[symbol]["Low"],
                         )
-                        filled_price = limit_price
                     elif order_type == constants.MARKET_ORDER:
+                        filled_price = row[symbol]["Open"]
                         order_status, msg = stock_entity.market_order(
                             trade=Trade(
                                 date=date,
@@ -271,9 +291,9 @@ class BacktestEngine:
                                 action=action,
                                 limit_price=row[symbol]["Open"],  # Use Open price as the limit price for Market Order
                                 quantity=quantity,
+                                fees=self.calculate_fees(qty=quantity, price_per_share=filled_price),
                             )
                         )
-                        filled_price = row[symbol]["Open"]
                     elif order_type in constants.STOP_LOST_TRIGGERS:
                         if action == constants.TRADE_ACTION_BUY:
                             if order_type in [constants.TRAILING_STOP_ORDER, constants.TRAILING_STOP_LIMIT_ORDER]:
@@ -326,7 +346,6 @@ class BacktestEngine:
                                 )  # Limit Price = Stop Price - Limit Offset
 
                                 # Update Order Book stop and limit price
-
                                 self.order_book.at[idx, "stop_price"] = new_stop_price
                                 self.order_book.at[idx, "limit_price"] = new_limit_price
                                 # Update Active Orders stop and limit price
@@ -370,6 +389,16 @@ class BacktestEngine:
                                 self.order_book.loc[order_idx, "comments"] = "Attached Order Cancelled"
                                 self.order_book.loc[order_idx, "filled_date"] = current_timestamp
 
+                        # Update Capital and fees
+                        fees_incurred = self.calculate_fees(qty=quantity, price_per_share=filled_price)
+                        if action == constants.TRADE_ACTION_BUY:
+                            self.current_capital -= filled_price * quantity
+                            self.current_capital -= fees_incurred
+                        else:
+                            self.current_capital += filled_price * quantity
+                            self.current_capital -= fees_incurred
+                        self.fees += fees_incurred
+
                 else:
                     # If it is a Day order, check if the order is still valid
                     if time_in_force == constants.TIME_IN_FORCE_DAY:
@@ -380,6 +409,7 @@ class BacktestEngine:
                             continue
 
                         if order_type == constants.LIMIT_ORDER:
+                            filled_price = limit_price
                             order_status, msg = stock_entity.limit_order(
                                 trade=Trade(
                                     date=date,
@@ -388,12 +418,13 @@ class BacktestEngine:
                                     action=action,
                                     limit_price=limit_price,
                                     quantity=quantity,
+                                    fees=self.calculate_fees(qty=quantity, price_per_share=filled_price),
                                 ),
                                 high_price=row[symbol]["High"],
                                 low_price=row[symbol]["Low"],
                             )
-                            filled_price = limit_price
                         elif order_type == constants.MARKET_ORDER:
+                            filled_price = row[symbol]["Open"]
                             order_status, msg = stock_entity.market_order(
                                 trade=Trade(
                                     date=date,
@@ -402,9 +433,9 @@ class BacktestEngine:
                                     action=action,
                                     limit_price=row[symbol]["Open"],  # Use Open price as the limit price
                                     quantity=quantity,
+                                    fees=self.calculate_fees(qty=quantity, price_per_share=filled_price),
                                 )
                             )
-                            filled_price = row[symbol]["Open"]
                         if order_status:
                             self.order_book.loc[idx, "status"] = constants.ORDER_STATUS_FILLED
                             self.order_book.loc[idx, "filled_date"] = current_timestamp
@@ -421,6 +452,16 @@ class BacktestEngine:
                                     # Add orders into active_orders to check if limit or stop loss orders triggered on the same day
                                     new_order = self.order_book.loc[[order_idx]]
                                     active_orders = pd.concat([active_orders, new_order])
+
+                            # Update Capital and fees
+                            fees_incurred = self.calculate_fees(qty=quantity, price_per_share=filled_price)
+                            if action == constants.TRADE_ACTION_BUY:
+                                self.current_capital -= filled_price * quantity
+                                self.current_capital -= fees_incurred
+                            else:
+                                self.current_capital += filled_price * quantity
+                                self.current_capital -= fees_incurred
+                            self.fees += fees_incurred
 
                         else:
                             self.order_book.loc[idx, "status"] = constants.ORDER_STATUS_CANCELLED
@@ -440,6 +481,7 @@ class BacktestEngine:
                     elif time_in_force == constants.TIME_IN_FORCE_GTC:
                         if order_type == constants.LIMIT_ORDER:
                             if order_type == constants.LIMIT_ORDER:
+                                filled_price = limit_price
                                 order_status, msg = stock_entity.limit_order(
                                     trade=Trade(
                                         date=date,
@@ -448,12 +490,13 @@ class BacktestEngine:
                                         action=action,
                                         limit_price=limit_price,
                                         quantity=quantity,
+                                        fees=self.calculate_fees(qty=quantity, price_per_share=filled_price),
                                     ),
                                     high_price=row[symbol]["High"],
                                     low_price=row[symbol]["Low"],
                                 )
-                                filled_price = limit_price
                             elif order_type == constants.MARKET_ORDER:
+                                filled_price = row[symbol]["Open"]
                                 order_status, msg = stock_entity.market_order(
                                     trade=Trade(
                                         date=date,
@@ -462,9 +505,9 @@ class BacktestEngine:
                                         action=action,
                                         limit_price=row[symbol]["Open"],  # Use Open price as the limit price
                                         quantity=quantity,
+                                        fees=self.calculate_fees(qty=quantity, price_per_share=filled_price),
                                     )
                                 )
-                                filled_price = row[symbol]["Open"]
                         if order_status:
                             self.order_book.loc[idx, "status"] = constants.ORDER_STATUS_FILLED
                             self.order_book.loc[idx, "filled_date"] = current_timestamp
@@ -477,9 +520,23 @@ class BacktestEngine:
                                 for order_idx in attached_order_idx_list:
                                     self.order_book.loc[order_idx, "status"] = constants.ORDER_STATUS_PENDING
                                     self.order_book.loc[order_idx, "order_date"] = current_timestamp
+
+                            # Update Capital and fees
+                            fees_incurred = self.calculate_fees(qty=quantity, price_per_share=filled_price)
+                            if action == constants.TRADE_ACTION_BUY:
+                                self.current_capital -= filled_price * quantity
+                                self.current_capital -= fees_incurred
+                            else:
+                                self.current_capital += filled_price * quantity
+                                self.current_capital -= fees_incurred
+                            self.fees += fees_incurred
+
                 # Remove row from df
                 active_orders = active_orders.drop(index=idx)
 
-            # Update Portfolio Records
+            # Update Stock Records
             for ticker, stock_entity in self.stocks.items():
                 stock_entity.update_holding_records(timestamp=current_timestamp, price=row[ticker]["Adj Close"])
+
+            # Update Portfolio Records
+            self.update_portfolio_records(current_timestamp)

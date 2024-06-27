@@ -9,6 +9,7 @@ from tqdm import tqdm
 from src import constants
 from src.entity import StockEntity, Trade
 from src.ibkr_fees import calculate_ibkr_fixed_cost
+import quantstats as qs
 
 
 @dataclass
@@ -79,6 +80,7 @@ class BacktestEngine:
         self.fees = 0.0
         self.portfolio_records = self._initialize_dataframe(self.PORTFOLIO_RECORDS_COLUMNS)
         self.portfolio_stats = self._initialize_dataframe(self.PORTFOLIO_STATS_COLUMNS)
+        self.combined_holding_records = pd.DataFrame()
 
         self.order_book["status"] = ""
         self.order_book["comments"] = ""
@@ -186,28 +188,54 @@ class BacktestEngine:
             self.stocks[stock] = StockEntity(symbol=stock)
 
     def update_portfolio_records(self, current_timestamp):
+        new_record = pd.DataFrame(
+            {
+                "total_fees": [self.fees],
+                "capital": [self.current_capital],
+            },
+            index=[current_timestamp],
+        )
+
         if self.portfolio_records.empty:
-            self.portfolio_records = pd.DataFrame(
-                {
-                    "date": [current_timestamp],
-                    "total_fees": [self.fees],
-                    "capital": [self.current_capital],
-                }
-            )
+            self.portfolio_records = new_record
         else:
-            self.portfolio_records = pd.concat(
-                [
-                    self.portfolio_records,
-                    pd.DataFrame(
-                        {
-                            "date": [current_timestamp],
-                            "total_fees": [self.fees],
-                            "capital": [self.current_capital],
-                        }
-                    ),
-                ],
-                ignore_index=True,
-            )
+            self.portfolio_records = pd.concat([self.portfolio_records, new_record])
+
+    def combine_holding_records(self):
+        holding_records_list = []
+
+        # Add the stock symbol as a level in the DataFrame's columns
+        for symbol, stock_entity in self.stocks.items():
+            stock_holding_records = stock_entity.holding_records[["quantity", "portfolio_value"]].copy()
+
+            stock_holding_records.columns = pd.MultiIndex.from_product([[symbol], stock_holding_records.columns])
+            holding_records_list.append(stock_holding_records)
+
+        # Add the portfolio capital as a level in the DataFrame's columns
+        portfolio_capital = self.portfolio_records[["capital", "total_fees"]].copy()
+        portfolio_capital.columns = pd.MultiIndex.from_product([["Portfolio"], portfolio_capital.columns])
+        holding_records_list.append(portfolio_capital)
+
+        # Concatenate all holding records along the columns axis
+        combined_holding_records = pd.concat(holding_records_list, axis=1)
+
+        # Calculate portfolio value (capital + all stock portfolio value) TODO: check this calculation
+        sum_all_portfolio_value = combined_holding_records.xs("portfolio_value", level=1, axis=1).sum(axis=1)
+
+        combined_holding_records[("Portfolio", "portfolio_value")] = (
+            sum_all_portfolio_value + combined_holding_records[("Portfolio", "capital")]
+        )
+
+        # Calculate returns
+        combined_holding_records[("Portfolio", "returns")] = combined_holding_records[
+            ("Portfolio", "portfolio_value")
+        ].pct_change()
+
+        self.combined_holding_records = combined_holding_records
+
+    def generate_tear_down(self, file_name):
+        returns = self.combined_holding_records[("Portfolio", "returns")]
+        qs.reports.html(returns, "SPY", output=file_name)
 
     def backtest(self):
         # Create StockEntity for each stock and store in the stocks dictionary
@@ -270,7 +298,7 @@ class BacktestEngine:
                         filled_price = limit_price
                         order_status, msg = stock_entity.limit_order(
                             trade=Trade(
-                                date=date,
+                                date=current_timestamp.strftime(format="%Y-%m-%d %H:%M:%S"),
                                 symbol=symbol,
                                 order_type=order_type,
                                 action=action,
@@ -285,7 +313,7 @@ class BacktestEngine:
                         filled_price = row[symbol]["Open"]
                         order_status, msg = stock_entity.market_order(
                             trade=Trade(
-                                date=date,
+                                date=current_timestamp.strftime(format="%Y-%m-%d %H:%M:%S"),
                                 symbol=symbol,
                                 order_type=order_type,
                                 action=action,
@@ -317,7 +345,7 @@ class BacktestEngine:
                                     Order(
                                         order_id=order_id,
                                         attached_order=True,
-                                        order_date=current_timestamp.strftime(format="%Y-%m-%d"),
+                                        order_date=current_timestamp.strftime(format="%Y-%m-%d %H:%M:%S"),
                                         ticker=symbol,
                                         order_type=constants.LIMIT_ORDER,
                                         action=constants.TRADE_ACTION_BUY,
@@ -357,7 +385,7 @@ class BacktestEngine:
                                     Order(
                                         order_id=order_id,
                                         attached_order=True,
-                                        order_date=current_timestamp.strftime(format="%Y-%m-%d"),
+                                        order_date=current_timestamp.strftime(format="%Y-%m-%d %H:%M:%S"),
                                         ticker=symbol,
                                         order_type=constants.LIMIT_ORDER,
                                         action=constants.TRADE_ACTION_SELL,
@@ -412,7 +440,7 @@ class BacktestEngine:
                             filled_price = limit_price
                             order_status, msg = stock_entity.limit_order(
                                 trade=Trade(
-                                    date=date,
+                                    date=current_timestamp.strftime(format="%Y-%m-%d %H:%M:%S"),
                                     symbol=symbol,
                                     order_type=order_type,
                                     action=action,
@@ -427,7 +455,7 @@ class BacktestEngine:
                             filled_price = row[symbol]["Open"]
                             order_status, msg = stock_entity.market_order(
                                 trade=Trade(
-                                    date=date,
+                                    date=current_timestamp.strftime(format="%Y-%m-%d %H:%M:%S"),
                                     symbol=symbol,
                                     order_type=order_type,
                                     action=action,
@@ -484,7 +512,7 @@ class BacktestEngine:
                                 filled_price = limit_price
                                 order_status, msg = stock_entity.limit_order(
                                     trade=Trade(
-                                        date=date,
+                                        date=current_timestamp.strftime(format="%Y-%m-%d %H:%M:%S"),
                                         symbol=symbol,
                                         order_type=order_type,
                                         action=action,
@@ -499,7 +527,7 @@ class BacktestEngine:
                                 filled_price = row[symbol]["Open"]
                                 order_status, msg = stock_entity.market_order(
                                     trade=Trade(
-                                        date=date,
+                                        date=current_timestamp.strftime(format="%Y-%m-%d %H:%M:%S"),
                                         symbol=symbol,
                                         order_type=order_type,
                                         action=action,
@@ -540,3 +568,6 @@ class BacktestEngine:
 
             # Update Portfolio Records
             self.update_portfolio_records(current_timestamp)
+
+        # Combine all the positions from all stock entities and portfolio capital
+        self.combine_holding_records()

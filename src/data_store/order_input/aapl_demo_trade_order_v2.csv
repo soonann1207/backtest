@@ -23,3 +23,6 @@ TEST_DAY_CANCELLED_1,TRUE,,AAPL,Limit,Buy,190,,,10,,,Good Till Cancelled
 TEST_MARKET_1,FALSE,2024-01-02,AAPL,Market,Buy,,,,10,,,Day
 TEST_MARKET_1,TRUE,,AAPL,Stop Limit,Sell,175,,175,10,,,Good Till Cancelled
 TEST_MARKET_1,TRUE,,AAPL,Limit,Sell,195,,,10,,,Good Till Cancelled
+TEST_TP_2,FALSE,2024-01-10,GOOGL,Limit,Buy,141,,,10,,,Day
+TEST_TP_2,TRUE,,GOOGL,Stop Limit,Sell,135,,135,10,,,Good Till Cancelled
+TEST_TP_2,TRUE,,GOOGL,Limit,Sell,150,,,10,,,Good Till Cancelled

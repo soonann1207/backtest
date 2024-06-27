@@ -105,13 +105,19 @@ class StockEntity:
             portfolio_value=net_position * price,
         )
 
+        new_record = pd.DataFrame([holding_records.__dict__]).dropna(axis=1)
+        new_record["date"] = pd.to_datetime(new_record["date"])
+        new_record = new_record.set_index("date")
+
         if self.holding_records.empty:
-            self.holding_records = pd.DataFrame([holding_records.__dict__])
+            self.holding_records = new_record
         else:
-            new_record = pd.DataFrame([holding_records.__dict__]).dropna(axis=1)
-            self.holding_records = pd.concat([self.holding_records, new_record], ignore_index=True)
+            self.holding_records = pd.concat([self.holding_records, new_record])
 
         # Calculate daily returns
+        """
+        Does it make sense to track daily returns using close price? what if the po
+        """
         # TODO: check how to calculate for short positions
         self.holding_records["daily_returns"] = self.holding_records["portfolio_value"].pct_change().fillna(0)
 
